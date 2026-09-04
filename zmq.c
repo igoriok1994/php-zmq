@@ -1001,7 +1001,7 @@ PHP_METHOD(zmqsocket, recvmulti)
 	do {
 		zend_string *part = php_zmq_recv(intern, flags);
 		if (!part) {
-			zval_dtor(return_value);
+			zval_ptr_dtor_nogc(return_value);
 			RETURN_FALSE;
 		}
 		add_next_index_str(return_value, part);
@@ -2810,7 +2810,7 @@ PHP_MINIT_FUNCTION(zmq)
 	INIT_CLASS_ENTRY(ce_context, "ZMQContext", php_zmq_context_class_methods);
 	ce_context.create_object = php_zmq_context_object_new;
 
-	zmq_context_object_handlers.offset    = XtOffsetOf(php_zmq_context_object, zo);
+	zmq_context_object_handlers.offset    = offsetof(php_zmq_context_object, zo);
 	zmq_context_object_handlers.clone_obj = NULL;
 	zmq_context_object_handlers.free_obj  = php_zmq_context_object_free_storage;
 
@@ -2819,7 +2819,7 @@ PHP_MINIT_FUNCTION(zmq)
 	INIT_CLASS_ENTRY(ce_socket, "ZMQSocket", php_zmq_socket_class_methods);
 	ce_socket.create_object = php_zmq_socket_object_new;
 
-	zmq_socket_object_handlers.offset    = XtOffsetOf(php_zmq_socket_object, zo);
+	zmq_socket_object_handlers.offset    = offsetof(php_zmq_socket_object, zo);
 	zmq_socket_object_handlers.clone_obj = NULL;
 	zmq_socket_object_handlers.free_obj  = php_zmq_socket_object_free_storage;
 
@@ -2828,7 +2828,7 @@ PHP_MINIT_FUNCTION(zmq)
 	INIT_CLASS_ENTRY(ce_poll, "ZMQPoll", php_zmq_poll_class_methods);
 	ce_poll.create_object = php_zmq_poll_object_new;
 
-	zmq_poll_object_handlers.offset    = XtOffsetOf(php_zmq_poll_object, zo);
+	zmq_poll_object_handlers.offset    = offsetof(php_zmq_poll_object, zo);
 	zmq_poll_object_handlers.clone_obj = NULL;
 	zmq_poll_object_handlers.free_obj  = php_zmq_poll_object_free_storage;
 
@@ -2837,7 +2837,7 @@ PHP_MINIT_FUNCTION(zmq)
 	INIT_CLASS_ENTRY(ce_device, "ZMQDevice", php_zmq_device_class_methods);
 	ce_device.create_object = php_zmq_device_object_new;
 
-	zmq_device_object_handlers.offset    = XtOffsetOf(php_zmq_device_object, zo);
+	zmq_device_object_handlers.offset    = offsetof(php_zmq_device_object, zo);
 	zmq_device_object_handlers.clone_obj = NULL;
 	zmq_device_object_handlers.free_obj  = php_zmq_device_object_free_storage;
 
@@ -2847,7 +2847,7 @@ PHP_MINIT_FUNCTION(zmq)
 	INIT_CLASS_ENTRY(ce_cert, "ZMQCert", php_zmq_cert_class_methods);
 	ce_cert.create_object = php_zmq_cert_new;
 
-	zmq_cert_object_handlers.offset    = XtOffsetOf(php_zmq_cert_object, zo);
+	zmq_cert_object_handlers.offset    = offsetof(php_zmq_cert_object, zo);
 	zmq_cert_object_handlers.clone_obj = php_zmq_cert_clone;
 	zmq_cert_object_handlers.free_obj  = php_zmq_cert_object_free_storage;
 
@@ -2856,7 +2856,7 @@ PHP_MINIT_FUNCTION(zmq)
 	INIT_CLASS_ENTRY(ce_auth, "ZMQAuth", php_zmq_auth_class_methods);
 	ce_auth.create_object = php_zmq_auth_new;
 
-	zmq_auth_object_handlers.offset    = XtOffsetOf(php_zmq_auth_object, zo);
+	zmq_auth_object_handlers.offset    = offsetof(php_zmq_auth_object, zo);
 	zmq_auth_object_handlers.clone_obj = NULL;
 	zmq_auth_object_handlers.free_obj  = php_zmq_auth_object_free_storage;
 
