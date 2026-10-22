@@ -21,6 +21,26 @@ jobs:
         with:
           arch: x64
 
+      - name: Install Bison and re2c Build Tools
+        shell: pwsh
+        run: |
+          # Установка Bison 3.x и re2c
+          choco install -y winflexbison3 --params="/Compat"
+          choco install -y re2c
+
+          # Гарантируем, что bison.exe доступен в системном каталоге Chocolatey
+          $bisonPath = Get-Command bison -ErrorAction SilentlyContinue
+          if (-not $bisonPath) {
+              $winBison = Get-ChildItem -Path "C:\ProgramData\chocolatey" -Filter "win_bison.exe" -Recurse | Select-Object -First 1
+              if ($winBison) {
+                  Copy-Item $winBison.FullName "C:\ProgramData\chocolatey\bin\bison.exe" -Force
+              }
+          }
+
+          # Проверка доступности
+          bison --version
+          re2c --version
+
       - name: Install ZeroMQ via vcpkg
         run: |
           vcpkg install zeromq:x64-windows
@@ -32,7 +52,6 @@ jobs:
           $isNts = "${{ matrix.ts }}" -eq "nts"
           $flavor = if ($isNts) { "nts-" } else { "" }
 
-          # Точные имена файлов по соглашению windows.php.net
           $binName = "php-$ver-${flavor}Win32-vs17-x64.zip"
           $develName = "php-devel-pack-$ver-${flavor}Win32-vs17-x64.zip"
 
@@ -60,11 +79,11 @@ jobs:
           New-Item -ItemType Directory -Force -Path "C:\php-devel"
           New-Item -ItemType Directory -Force -Path "C:\temp-devel"
 
-          # 1. Скачиваем и распаковываем рабочий PHP (для наличия php.exe)
+          # 1. Скачиваем бинарный PHP (для php.exe)
           Download-PhpPackage $binName "C:\php-bin.zip"
           Expand-Archive -Path "C:\php-bin.zip" -DestinationPath "C:\php" -Force
 
-          # 2. Скачиваем и распаковываем Devel Pack (для заголовочных файлов и phpize)
+          # 2. Скачиваем Devel Pack (заголовки и phpize)
           Download-PhpPackage $develName "C:\php-devel.zip"
           Expand-Archive -Path "C:\php-devel.zip" -DestinationPath "C:\temp-devel" -Force
 
@@ -75,7 +94,7 @@ jobs:
               Copy-Item -Path "C:\temp-devel\*" -Destination "C:\php-devel" -Recurse -Force
           }
 
-          # 3. Интегрируем заголовки и библиотеки ZeroMQ прямо в Devel Pack
+          # 3. Копируем заголовки и библиотеки ZeroMQ в каталоги Devel Pack
           $zmqDir = "C:\vcpkg\installed\x64-windows"
           Copy-Item -Path "$zmqDir\include\*" -Destination "C:\php-devel\include" -Recurse -Force
           Copy-Item -Path "$zmqDir\lib\*" -Destination "C:\php-devel\lib" -Recurse -Force
@@ -83,7 +102,6 @@ jobs:
               Copy-Item -Path "$zmqDir\lib\libzmq.lib" -Destination "C:\php-devel\lib\zmq.lib" -Force
           }
 
-          # Добавляем пути в окружение runner
           "C:\php" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           "C:\php-devel" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
@@ -109,7 +127,6 @@ jobs:
           }
           Write-Host "Found compiled DLL: $($dll.FullName)"
 
-          # Проверка загрузки расширения в PHP
           Copy-Item "C:\vcpkg\installed\x64-windows\bin\libzmq.dll" "C:\php\" -Force
           Copy-Item $dll.FullName "C:\php\ext\php_zmq.dll" -Force
           Set-Content -Path "C:\php\php.ini" -Value "extension=zmq"
@@ -128,7 +145,6 @@ jobs:
           New-Item -ItemType Directory -Force -Path $outDir
           $dll = Get-ChildItem -Path $env:GITHUB_WORKSPACE -Filter "php_zmq.dll" -Recurse | Select-Object -First 1
           Copy-Item $dll.FullName -Destination $outDir -Force
-          # Кладем зависимость libzmq.dll в архив к php_zmq.dll
           Copy-Item "C:\vcpkg\installed\x64-windows\bin\libzmq.dll" -Destination $outDir -Force
 
       - name: Upload DLL Artifact
