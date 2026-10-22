@@ -123,6 +123,18 @@ jobs:
         run: |
           php -v
 
+      - name: Fix legacy stdint include for PHP 8.4
+        shell: pwsh
+        run: |
+          $headerPath = Join-Path $env:GITHUB_WORKSPACE 'php_zmq_private.h'
+          $header = [IO.File]::ReadAllText($headerPath)
+          $legacyInclude = '# include "win32/php_stdint.h"'
+          if (-not $header.Contains($legacyInclude)) {
+              throw 'Expected legacy stdint include was not found in php_zmq_private.h'
+          }
+          $header = $header.Replace($legacyInclude, '# include <stdint.h>')
+          [IO.File]::WriteAllText($headerPath, $header)
+
       - name: Build Extension
         shell: cmd
         run: |
