@@ -9,7 +9,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        php-version: ['8.4.4']
+        php-version: ['8.4.27', '8.5.12']
         ts: ['nts', 'ts']
 
     steps:
@@ -123,7 +123,7 @@ jobs:
         run: |
           php -v
 
-      - name: Fix legacy stdint include for PHP 8.4
+      - name: Fix legacy stdint include for PHP 8.4 and 8.5
         shell: pwsh
         run: |
           $headerPath = Join-Path $env:GITHUB_WORKSPACE 'php_zmq_private.h'
@@ -163,7 +163,7 @@ jobs:
           Copy-Item "C:\zmq\bin\*.dll" "C:\php\" -Force
           Copy-Item $dll.FullName "C:\php\ext\php_zmq.dll" -Force
           $expectedZts = if ("${{ matrix.ts }}" -eq "ts") { 1 } else { 0 }
-          & C:\php\php.exe -n -r "exit(PHP_VERSION === '8.4.4' && PHP_INT_SIZE === 8 && (int)PHP_ZTS === $expectedZts ? 0 : 1);"
+          & C:\php\php.exe -n -r "exit(PHP_VERSION === '${{ matrix.php-version }}' && PHP_INT_SIZE === 8 && (int)PHP_ZTS === $expectedZts ? 0 : 1);"
           if ($LASTEXITCODE -ne 0) { throw "PHP version/architecture/TS mismatch" }
           & C:\php\php.exe -n -d extension_dir=C:\php\ext -d extension=php_zmq.dll -r 'if (!extension_loaded("zmq")) { exit(1); } $ctx = new ZMQContext(1, false); $socket = $ctx->getSocket(ZMQ::SOCKET_PAIR); echo "ZeroMQ socket created", PHP_EOL;'
           if ($LASTEXITCODE -ne 0) { throw "ZeroMQ load/socket smoke test failed" }
