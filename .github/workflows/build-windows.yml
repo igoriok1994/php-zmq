@@ -38,35 +38,33 @@ jobs:
       - name: Install ZeroMQ via vcpkg
         run: |
           vcpkg install zeromq:x64-windows
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg failed: $LASTEXITCODE" }
 
-      - name: Prepare ZeroMQ Directory Structure
+      - name: Prepare ZeroMQ Dependencies
         shell: pwsh
         run: |
-          $vcpkgRoot = "C:\vcpkg\installed\x64-windows"
-          $zmqTarget = "C:\zmq"
-
-          New-Item -ItemType Directory -Force -Path "$zmqTarget"
-          New-Item -ItemType Directory -Force -Path "$zmqTarget\include"
-          New-Item -ItemType Directory -Force -Path "$zmqTarget\include\zmq"
-          New-Item -ItemType Directory -Force -Path "$zmqTarget\lib"
-
-          # Копируем заголовки
-          Copy-Item "$vcpkgRoot\include\*" "$zmqTarget\" -Force -Recurse
-          Copy-Item "$vcpkgRoot\include\*" "$zmqTarget\include\" -Force -Recurse
-          Copy-Item "$vcpkgRoot\include\*" "$zmqTarget\include\zmq\" -Force -Recurse
-
-          # Копируем .lib файлы под всеми возможными именами
-          $libs = Get-ChildItem -Path "$vcpkgRoot\lib" -Filter "*.lib"
-          foreach ($lib in $libs) {
-              Copy-Item $lib.FullName "$zmqTarget\$($lib.Name)" -Force
-              Copy-Item $lib.FullName "$zmqTarget\lib\$($lib.Name)" -Force
-              Copy-Item $lib.FullName "$zmqTarget\libzmq.lib" -Force
-              Copy-Item $lib.FullName "$zmqTarget\lib\libzmq.lib" -Force
-              Copy-Item $lib.FullName "$zmqTarget\zmq.lib" -Force
-              Copy-Item $lib.FullName "$zmqTarget\lib\zmq.lib" -Force
+          $VcpkgRoot = "C:\vcpkg\installed\x64-windows"
+          $Destination = "C:\zmq"
+          $ErrorActionPreference = 'Stop'
+          if (-not (Test-Path -LiteralPath "$VcpkgRoot\include\zmq.h")) {
+              throw "ZeroMQ header missing: $VcpkgRoot\include\zmq.h"
           }
 
-          Get-ChildItem -Path "$zmqTarget"
+          # Match the import library to its DLL, excluding static libraries. Keep the
+          # DLL's original name: it is embedded in the import library.
+          $imports = @(Get-ChildItem -LiteralPath "$VcpkgRoot\lib" -Filter 'libzmq*.lib' |
+              Where-Object { Test-Path -LiteralPath "$VcpkgRoot\bin\$($_.BaseName).dll" })
+          if ($imports.Count -ne 1) {
+              throw "Expected one shared ZeroMQ import library with a matching DLL; found $($imports.Count) in $VcpkgRoot"
+          }
+
+          New-Item -ItemType Directory -Force -Path "$Destination\include", "$Destination\lib", "$Destination\bin" | Out-Null
+          Copy-Item "$VcpkgRoot\include\*.h" "$Destination\include\" -Force
+          Copy-Item -LiteralPath $imports[0].FullName -Destination "$Destination\lib\libzmq.lib" -Force
+          # Include transitive runtime dependencies, for example libsodium.
+          Copy-Item "$VcpkgRoot\bin\*.dll" "$Destination\bin\" -Force
+          Write-Host "ZeroMQ import library: $($imports[0].Name) -> libzmq.lib"
+          Get-ChildItem "$Destination\lib", "$Destination\bin"
 
       - name: Download and Setup PHP & Devel Pack
         shell: pwsh
@@ -80,14 +78,12 @@ jobs:
 
           function Download-PhpPackage ($filename, $targetPath) {
               $urls = @(
-                  "https://windows.php.net/downloads/releases/$filename",
                   "https://windows.php.net/downloads/releases/archives/$filename",
-                  "https://windows.php.net/downloads/qa/$filename",
-                  "https://windows.php.net/downloads/qa/archives/$filename"
+                  "https://windows.php.net/downloads/releases/$filename"
               )
               foreach ($url in $urls) {
                   try {
-                      Write-Host "Trying $url..."
+                      Write-Host "Downloading $url..."
                       Invoke-WebRequest -Uri $url -OutFile $targetPath -UseBasicParsing -ErrorAction Stop
                       if ((Get-Item $targetPath).Length -gt 50000) {
                           Write-Host "Downloaded $filename ($((Get-Item $targetPath).Length) bytes)"
@@ -104,9 +100,11 @@ jobs:
           New-Item -ItemType Directory -Force -Path "C:\php-devel"
           New-Item -ItemType Directory -Force -Path "C:\temp-devel"
 
+          # 1. Скачиваем бинарный PHP (для php.exe)
           Download-PhpPackage $binName "C:\php-bin.zip"
           Expand-Archive -Path "C:\php-bin.zip" -DestinationPath "C:\php" -Force
 
+          # 2. Скачиваем Devel Pack (заголовки и phpize)
           Download-PhpPackage $develName "C:\php-devel.zip"
           Expand-Archive -Path "C:\php-devel.zip" -DestinationPath "C:\temp-devel" -Force
 
@@ -116,10 +114,6 @@ jobs:
           } else {
               Copy-Item -Path "C:\temp-devel\*" -Destination "C:\php-devel" -Recurse -Force
           }
-
-          # Добавляем заголовки и библиотеки также напрямую в Devel Pack
-          Copy-Item "C:\zmq\include\*" "C:\php-devel\include\" -Recurse -Force
-          Copy-Item "C:\zmq\lib\*" "C:\php-devel\lib\" -Recurse -Force
 
           "C:\php" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           "C:\php-devel" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
@@ -134,20 +128,15 @@ jobs:
         run: |
           cd /d "%GITHUB_WORKSPACE%"
           call C:\php-devel\phpize.bat
-
-          set PHP_BUILD=C:\zmq
-          REM shared,C:\zmq без внешних кавычек — ключевой параметр для сборки DLL
-          call configure.bat --with-prefix=C:\php-devel --with-zmq=shared,C:\zmq --with-extra-includes=C:\zmq\include --with-extra-libs=C:\zmq\lib
           if %errorlevel% neq 0 exit /b %errorlevel%
 
-          REM Проверка, что цель php_zmq.dll действительно создана в Makefile
-          findstr /I "php_zmq.dll" Makefile
-          if %errorlevel% neq 0 (
-              echo ERROR: configure.bat did not enable zmq as a shared extension!
-              exit /b 1
-          )
+          call configure.bat --with-zmq --with-php-build="C:\zmq" --with-prefix="C:\php"
+          if %errorlevel% neq 0 exit /b %errorlevel%
 
-          nmake
+          findstr /b /l /c:"php_zmq.dll:" Makefile
+          if %errorlevel% neq 0 exit /b 1
+
+          nmake /nologo php_zmq.dll
           if %errorlevel% neq 0 exit /b %errorlevel%
 
       - name: Smoke Test Extension
@@ -159,16 +148,13 @@ jobs:
           }
           Write-Host "Found compiled DLL: $($dll.FullName)"
 
-          Copy-Item "C:\vcpkg\installed\x64-windows\bin\libzmq.dll" "C:\php\" -Force
+          Copy-Item "C:\zmq\bin\*.dll" "C:\php\" -Force
           Copy-Item $dll.FullName "C:\php\ext\php_zmq.dll" -Force
-          Set-Content -Path "C:\php\php.ini" -Value "extension=zmq"
-
-          $loadedModules = php -m
-          if ($loadedModules -match "zmq") {
-              Write-Host "Verification successful: zmq extension successfully loaded!"
-          } else {
-              throw "Smoke test failed: zmq not found in php -m output"
-          }
+          $expectedZts = if ("${{ matrix.ts }}" -eq "ts") { 1 } else { 0 }
+          & C:\php\php.exe -n -r "exit(PHP_VERSION === '8.4.4' && PHP_INT_SIZE === 8 && (int)PHP_ZTS === $expectedZts ? 0 : 1);"
+          if ($LASTEXITCODE -ne 0) { throw "PHP version/architecture/TS mismatch" }
+          & C:\php\php.exe -n -d extension_dir=C:\php\ext -d extension=php_zmq.dll -r 'if (!extension_loaded("zmq")) { exit(1); } $ctx = new ZMQContext(1, false); $socket = $ctx->getSocket(ZMQ::SOCKET_PAIR); echo "ZeroMQ socket created", PHP_EOL;'
+          if ($LASTEXITCODE -ne 0) { throw "ZeroMQ load/socket smoke test failed" }
 
       - name: Prepare Artifacts
         shell: pwsh
@@ -177,7 +163,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path $outDir
           $dll = Get-ChildItem -Path $env:GITHUB_WORKSPACE -Filter "php_zmq.dll" -Recurse | Select-Object -First 1
           Copy-Item $dll.FullName -Destination $outDir -Force
-          Copy-Item "C:\vcpkg\installed\x64-windows\bin\libzmq.dll" -Destination $outDir -Force
+          Copy-Item "C:\zmq\bin\*.dll" -Destination $outDir -Force
 
       - name: Upload DLL Artifact
         uses: actions/upload-artifact@v4
@@ -185,3 +171,4 @@ jobs:
         with:
           name: php_zmq-${{ matrix.php-version }}-${{ matrix.ts }}-x64
           path: output/*
+          if-no-files-found: error
