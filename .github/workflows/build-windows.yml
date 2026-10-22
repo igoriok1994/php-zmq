@@ -24,26 +24,46 @@ jobs:
       - name: Install Bison and re2c Build Tools
         shell: pwsh
         run: |
-          # Установка Bison 3.x и re2c
           choco install -y winflexbison3 --params="/Compat"
           choco install -y re2c
 
-          # Гарантируем, что bison.exe доступен в системном каталоге Chocolatey
-          $bisonPath = Get-Command bison -ErrorAction SilentlyContinue
-          if (-not $bisonPath) {
-              $winBison = Get-ChildItem -Path "C:\ProgramData\chocolatey" -Filter "win_bison.exe" -Recurse | Select-Object -First 1
-              if ($winBison) {
-                  Copy-Item $winBison.FullName "C:\ProgramData\chocolatey\bin\bison.exe" -Force
-              }
+          $winBison = Get-ChildItem -Path "C:\ProgramData\chocolatey" -Filter "win_bison.exe" -Recurse | Select-Object -First 1
+          if ($winBison) {
+              Copy-Item $winBison.FullName "C:\ProgramData\chocolatey\bin\bison.exe" -Force
           }
 
-          # Проверка доступности
           bison --version
           re2c --version
 
       - name: Install ZeroMQ via vcpkg
         run: |
           vcpkg install zeromq:x64-windows
+
+      - name: Prepare ZeroMQ Directory Structure
+        shell: pwsh
+        run: |
+          $vcpkgRoot = "C:\vcpkg\installed\x64-windows"
+          $zmqTarget = "C:\zmq"
+
+          New-Item -ItemType Directory -Force -Path "$zmqTarget"
+          New-Item -ItemType Directory -Force -Path "$zmqTarget\include"
+          New-Item -ItemType Directory -Force -Path "$zmqTarget\include\zmq"
+          New-Item -ItemType Directory -Force -Path "$zmqTarget\lib"
+
+          # Копируем заголовки в корень и в include
+          Copy-Item "$vcpkgRoot\include\*" "$zmqTarget\" -Force -Recurse
+          Copy-Item "$vcpkgRoot\include\*" "$zmqTarget\include\" -Force -Recurse
+          Copy-Item "$vcpkgRoot\include\*" "$zmqTarget\include\zmq\" -Force -Recurse
+
+          # Копируем библиотеки в корень и в lib под обоими именами (libzmq.lib и zmq.lib)
+          Copy-Item "$vcpkgRoot\lib\*" "$zmqTarget\" -Force
+          Copy-Item "$vcpkgRoot\lib\*" "$zmqTarget\lib\" -Force
+          if (Test-Path "$vcpkgRoot\lib\libzmq.lib") {
+              Copy-Item "$vcpkgRoot\lib\libzmq.lib" "$zmqTarget\zmq.lib" -Force
+              Copy-Item "$vcpkgRoot\lib\libzmq.lib" "$zmqTarget\lib\zmq.lib" -Force
+          }
+
+          Get-ChildItem -Path "$zmqTarget"
 
       - name: Download and Setup PHP & Devel Pack
         shell: pwsh
@@ -94,13 +114,9 @@ jobs:
               Copy-Item -Path "C:\temp-devel\*" -Destination "C:\php-devel" -Recurse -Force
           }
 
-          # 3. Копируем заголовки и библиотеки ZeroMQ в каталоги Devel Pack
-          $zmqDir = "C:\vcpkg\installed\x64-windows"
-          Copy-Item -Path "$zmqDir\include\*" -Destination "C:\php-devel\include" -Recurse -Force
-          Copy-Item -Path "$zmqDir\lib\*" -Destination "C:\php-devel\lib" -Recurse -Force
-          if (Test-Path "$zmqDir\lib\libzmq.lib") {
-              Copy-Item -Path "$zmqDir\lib\libzmq.lib" -Destination "C:\php-devel\lib\zmq.lib" -Force
-          }
+          # 3. Интегрируем заголовки и библиотеки ZeroMQ в Devel Pack
+          Copy-Item "C:\zmq\include\*" "C:\php-devel\include\" -Recurse -Force
+          Copy-Item "C:\zmq\lib\*" "C:\php-devel\lib\" -Recurse -Force
 
           "C:\php" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           "C:\php-devel" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
@@ -115,8 +131,13 @@ jobs:
         run: |
           cd /d "%GITHUB_WORKSPACE%"
           call C:\php-devel\phpize.bat
-          call configure.bat --with-zmq="C:\vcpkg\installed\x64-windows" --with-prefix="C:\php-devel"
+
+          set PHP_BUILD=C:\zmq
+          call configure.bat --with-zmq="C:\zmq" --with-prefix="C:\php-devel" --with-extra-includes="C:\zmq;C:\zmq\include" --with-extra-libs="C:\zmq;C:\zmq\lib"
+          if %errorlevel% neq 0 exit /b %errorlevel%
+
           nmake
+          if %errorlevel% neq 0 exit /b %errorlevel%
 
       - name: Smoke Test Extension
         shell: pwsh
