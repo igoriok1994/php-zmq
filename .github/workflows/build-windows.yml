@@ -50,17 +50,20 @@ jobs:
           New-Item -ItemType Directory -Force -Path "$zmqTarget\include\zmq"
           New-Item -ItemType Directory -Force -Path "$zmqTarget\lib"
 
-          # Копируем заголовки в корень и в include
+          # Копируем заголовки
           Copy-Item "$vcpkgRoot\include\*" "$zmqTarget\" -Force -Recurse
           Copy-Item "$vcpkgRoot\include\*" "$zmqTarget\include\" -Force -Recurse
           Copy-Item "$vcpkgRoot\include\*" "$zmqTarget\include\zmq\" -Force -Recurse
 
-          # Копируем библиотеки в корень и в lib под обоими именами (libzmq.lib и zmq.lib)
-          Copy-Item "$vcpkgRoot\lib\*" "$zmqTarget\" -Force
-          Copy-Item "$vcpkgRoot\lib\*" "$zmqTarget\lib\" -Force
-          if (Test-Path "$vcpkgRoot\lib\libzmq.lib") {
-              Copy-Item "$vcpkgRoot\lib\libzmq.lib" "$zmqTarget\zmq.lib" -Force
-              Copy-Item "$vcpkgRoot\lib\libzmq.lib" "$zmqTarget\lib\zmq.lib" -Force
+          # Копируем .lib файлы под всеми возможными именами
+          $libs = Get-ChildItem -Path "$vcpkgRoot\lib" -Filter "*.lib"
+          foreach ($lib in $libs) {
+              Copy-Item $lib.FullName "$zmqTarget\$($lib.Name)" -Force
+              Copy-Item $lib.FullName "$zmqTarget\lib\$($lib.Name)" -Force
+              Copy-Item $lib.FullName "$zmqTarget\libzmq.lib" -Force
+              Copy-Item $lib.FullName "$zmqTarget\lib\libzmq.lib" -Force
+              Copy-Item $lib.FullName "$zmqTarget\zmq.lib" -Force
+              Copy-Item $lib.FullName "$zmqTarget\lib\zmq.lib" -Force
           }
 
           Get-ChildItem -Path "$zmqTarget"
@@ -77,12 +80,14 @@ jobs:
 
           function Download-PhpPackage ($filename, $targetPath) {
               $urls = @(
+                  "https://windows.php.net/downloads/releases/$filename",
                   "https://windows.php.net/downloads/releases/archives/$filename",
-                  "https://windows.php.net/downloads/releases/$filename"
+                  "https://windows.php.net/downloads/qa/$filename",
+                  "https://windows.php.net/downloads/qa/archives/$filename"
               )
               foreach ($url in $urls) {
                   try {
-                      Write-Host "Downloading $url..."
+                      Write-Host "Trying $url..."
                       Invoke-WebRequest -Uri $url -OutFile $targetPath -UseBasicParsing -ErrorAction Stop
                       if ((Get-Item $targetPath).Length -gt 50000) {
                           Write-Host "Downloaded $filename ($((Get-Item $targetPath).Length) bytes)"
@@ -99,11 +104,9 @@ jobs:
           New-Item -ItemType Directory -Force -Path "C:\php-devel"
           New-Item -ItemType Directory -Force -Path "C:\temp-devel"
 
-          # 1. Скачиваем бинарный PHP (для php.exe)
           Download-PhpPackage $binName "C:\php-bin.zip"
           Expand-Archive -Path "C:\php-bin.zip" -DestinationPath "C:\php" -Force
 
-          # 2. Скачиваем Devel Pack (заголовки и phpize)
           Download-PhpPackage $develName "C:\php-devel.zip"
           Expand-Archive -Path "C:\php-devel.zip" -DestinationPath "C:\temp-devel" -Force
 
@@ -114,7 +117,7 @@ jobs:
               Copy-Item -Path "C:\temp-devel\*" -Destination "C:\php-devel" -Recurse -Force
           }
 
-          # 3. Интегрируем заголовки и библиотеки ZeroMQ в Devel Pack
+          # Добавляем заголовки и библиотеки также напрямую в Devel Pack
           Copy-Item "C:\zmq\include\*" "C:\php-devel\include\" -Recurse -Force
           Copy-Item "C:\zmq\lib\*" "C:\php-devel\lib\" -Recurse -Force
 
@@ -133,8 +136,16 @@ jobs:
           call C:\php-devel\phpize.bat
 
           set PHP_BUILD=C:\zmq
-          call configure.bat --with-zmq="C:\zmq" --with-prefix="C:\php-devel" --with-extra-includes="C:\zmq;C:\zmq\include" --with-extra-libs="C:\zmq;C:\zmq\lib"
+          REM shared,C:\zmq без внешних кавычек — ключевой параметр для сборки DLL
+          call configure.bat --with-prefix=C:\php-devel --with-zmq=shared,C:\zmq --with-extra-includes=C:\zmq\include --with-extra-libs=C:\zmq\lib
           if %errorlevel% neq 0 exit /b %errorlevel%
+
+          REM Проверка, что цель php_zmq.dll действительно создана в Makefile
+          findstr /I "php_zmq.dll" Makefile
+          if %errorlevel% neq 0 (
+              echo ERROR: configure.bat did not enable zmq as a shared extension!
+              exit /b 1
+          )
 
           nmake
           if %errorlevel% neq 0 exit /b %errorlevel%
