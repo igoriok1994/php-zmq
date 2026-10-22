@@ -2,6 +2,14 @@ name: Build php_zmq Windows DLL
 
 on:
   workflow_dispatch:
+    inputs:
+      release-tag:
+        description: 'Release tag (leave empty for windows-<run number>)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -184,3 +192,55 @@ jobs:
           name: php_zmq-${{ matrix.php-version }}-${{ matrix.ts }}-x64
           path: output/*
           if-no-files-found: error
+
+  release:
+    name: Publish Windows DLL release
+    needs: build
+    runs-on: windows-2022
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ inputs.release-tag || format('windows-{0}', github.run_number) }}
+      BUILD_COMMIT: ${{ github.sha }}
+
+    steps:
+      - name: Download all four build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: php_zmq-*
+          path: artifacts
+
+      - name: Create release ZIP archives
+        shell: pwsh
+        run: |
+          $builds = @(Get-ChildItem artifacts -Directory)
+          if ($builds.Count -ne 4) {
+              throw "Expected four build artifacts, found $($builds.Count)"
+          }
+          New-Item -ItemType Directory -Force release-assets | Out-Null
+          foreach ($build in $builds) {
+              if (-not (Test-Path -LiteralPath (Join-Path $build.FullName 'php_zmq.dll'))) {
+                  throw "php_zmq.dll missing in $($build.Name)"
+              }
+              Compress-Archive -Path "$($build.FullName)\*" -DestinationPath "release-assets\$($build.Name).zip" -Force
+          }
+
+      - name: Publish GitHub Release
+        shell: pwsh
+        run: |
+          $archives = @(Get-ChildItem release-assets -Filter '*.zip' | ForEach-Object { $_.FullName })
+          $notes = @(
+              'Windows x64 builds of php_zmq for PHP 8.4 and 8.5, in TS and NTS variants.',
+              '',
+              'Each ZIP contains php_zmq.dll and the ZeroMQ runtime dependencies.',
+              'Choose the PHP version and TS/NTS variant matching your PHP installation.',
+              'Copy php_zmq.dll to the PHP ext directory and the other DLLs beside php.exe.',
+              'Enable extension=php_zmq.dll in php.ini and restart PHP or the web server.',
+              '',
+              "Source commit: $env:BUILD_COMMIT"
+          )
+          Set-Content -LiteralPath release-notes.md -Value $notes -Encoding utf8
+          gh release create "$env:RELEASE_TAG" @archives --repo "$env:GH_REPO" --target "$env:BUILD_COMMIT" --title "php_zmq Windows DLLs ($env:RELEASE_TAG)" --notes-file release-notes.md
+          if ($LASTEXITCODE -ne 0) { throw 'GitHub Release publication failed; use a new tag if the release already exists' }
