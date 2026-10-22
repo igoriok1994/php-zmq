@@ -1,0 +1,64 @@
+name: Build php_zmq Windows DLL
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+    strategy:
+      matrix:
+        php-version: ['8.4.4']
+        ts: ['nts', 'ts']
+
+    steps:
+      - name: Checkout php-zmq
+        uses: actions/checkout@v4
+        with:
+          path: php-zmq
+
+      - name: Setup MSVC Developer Environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Download SDK, PHP Devel Pack and Build
+        shell: cmd
+        run: |
+          git clone --depth 1 https://github.com/php/php-sdk-binary-tools.git C:\php-sdk
+          call C:\php-sdk\phpsdk-vs17-x64.bat
+
+          mkdir C:\build
+          cd /d C:\build
+
+          REM 1. Скачиваем devel-pack под нужный режим (NTS или TS)
+          if "${{ matrix.ts }}"=="nts" (
+              set DEVEL_URL=https://windows.php.net/downloads/releases/php-devel-pack-${{ matrix.php-version }}-Win32-vs17-x64.zip
+              set DEVEL_DIR=php-${{ matrix.php-version }}-devel-vs17-x64
+          ) else (
+              set DEVEL_URL=https://windows.php.net/downloads/releases/php-devel-pack-${{ matrix.php-version }}-Win32-vs17-x64-ts.zip
+              set DEVEL_DIR=php-${{ matrix.php-version }}-devel-vs17-x64-ts
+          )
+
+          curl -LO %DEVEL_URL%
+          tar -xf php-devel-pack-*.zip
+
+          REM 2. Скачиваем официальную libzmq для Windows
+          curl -LO https://github.com/zeromq/libzmq/releases/download/v4.3.5/zeromq-4.3.5-win.zip
+          tar -xf zeromq-4.3.5-win.zip
+
+          REM 3. Сборка расширения
+          cd /d %GITHUB_WORKSPACE%\php-zmq
+          call C:\build\%DEVEL_DIR%\phpize.bat
+          call configure.bat --enable-zmq --with-prefix=C:\build\%DEVEL_DIR% --with-zmq=C:\build\zeromq-4.3.5
+          nmake
+
+          REM 4. Подготовка артефактов
+          mkdir %GITHUB_WORKSPACE%\output
+          copy x64\Release*\php_zmq.dll %GITHUB_WORKSPACE%\output\
+
+      - name: Upload DLL Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: php_zmq-${{ matrix.php-version }}-${{ matrix.ts }}-x64
+          path: output/php_zmq.dll
